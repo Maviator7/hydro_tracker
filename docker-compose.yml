@@ -1,14 +1,74 @@
 version: "3.8"
 
 services:
-  hydro-tracker:
-    build: .
+  # PostgreSQLデータベース
+  postgres:
+    image: postgres:15-alpine
+    container_name: hydrotracker_postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      # 明示的に設定
+      POSTGRES_USER: hydro_user
+      POSTGRES_PASSWORD: hydro_pass
+      POSTGRES_DB: hydro_db
+      # PostgreSQL初期化用
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hydro_user -d hydro_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: >
+      postgres
+      -c shared_preload_libraries=''
+      -c max_connections=100
+      -c shared_buffers=128MB
+
+  # FastAPI バックエンド
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hydrotracker_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      # 正しいデータベースURL
+      - DATABASE_URL=postgresql://hydro_user:hydro_pass@postgres:5432/hydro_db
+      - SECRET_KEY=your-secret-key-here
+      - DEBUG=True
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # React フロントエンド
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hydrotracker_frontend
+    restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
-      - .:/app
+      - ./frontend:/app
       - /app/node_modules
     environment:
-      - NODE_ENV=development
-    stdin_open: true
-    tty: true
+      - VITE_API_URL=http://localhost:8000
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: hydrotracker_network
